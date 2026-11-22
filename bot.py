@@ -1,54 +1,154 @@
-import os
-from flask import Flask, render_template_string
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import qrcode
+import io
+import os
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-TOKEN = '8996461719:AAFMAw1xfmMFdu-uFmVA4fznrL8zUu_teSg'
-bot = telebot.TeleBot(TOKEN)
-app = Flask(__name__)
+# ==========================================
+# AAPKI COMPLETE DETAILS SET HAIN
+# ==========================================
+BOT_TOKEN = "9223716709:AAF1zYFdQ1Wz8fwLDycv4SNZpTedGFzZxQg"
+ADMIN_ID = 6657235468
+UPI_ID = "shaikhdemon@fam"
+PAYEE_NAME = "Digital Store"
 
-# Yahan tera Web App ka link aayega (Render ka URL ya GitHub Pages ka link)
-WEB_APP_URL = "https://corebot-xyz.onrender.com"  # Isko baad me apne Render URL se update kar denge
+# Aapke 3 Videos / Packs Set Hain
+PRODUCTS = {
+    "pack1": {
+        "name": "🎬 Pack 1 (Demo)",
+        "price": 39,
+        "channel_id": -1004461175417,
+        "msg_id": 2
+    },
+    "pack2": {
+        "name": "🔥 Pack 2 (Standard)",
+        "price": 69,
+        "channel_id": -1004461175417,
+        "msg_id": 3
+    },
+    "pack3": {
+        "name": "💎 Pack 3 (Full VIP)",
+        "price": 99,
+        "channel_id": -1004461175417,
+        "msg_id": 4
+    }
+}
+# ==========================================
 
-@app.route('/')
-index():
-    # Ye tera GambleFi Mini App ka front-end (HTML/CSS) hai
-    return render_template_string('''
-    <html>
-        <head>
-            <title>Core Dream GambleFi</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                body { background-color: #0f172a; color: white; font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-                h1 { color: #facc15; }
-                .card { background: #1e293b; padding: 20px; border-radius: 15px; margin-top: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
-                button { background: #22c55e; color: white; border: none; padding: 12px 24px; font-size: 18px; border-radius: 8px; cursor: pointer; font-weight: bold; margin-top: 15px; }
-                button:active { background: #16a34a; }
-            </style>
-        </head>
-        <body>
-            <h1>🔥 Core Dream 🔥</h1>
-            <p>Welcome to the ultimate GambleFi experience, bhai!</p>
-            <div class="card">
-                <h3>Your Balance: 🪙 1,000 CORE</h3>
-                <p>Tap below to roll and win big!</p>
-                <button onclick="alert('Spinning feature coming soon, bhai!')">SPIN & WIN</button>
-            </div>
-        </body>
-    </html>
-    ''')
+bot = telebot.TeleBot(BOT_TOKEN)
+user_orders = {}
+
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running 24/7!")
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    server.serve_forever()
+
+def generate_upi_qr(amount, note):
+    upi_url = f"upi://pay?pa={UPI_ID}&pn={PAYEE_NAME}&am={amount}&cu=INR&tn={note}"
+    qr = qrcode.make(upi_url)
+    bio = io.BytesIO()
+    bio.name = 'qr.png'
+    qr.save(bio, 'PNG')
+    bio.seek(0)
+    return bio
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     markup = InlineKeyboardMarkup()
-    # WebApp button jo direct game khol dega
-    web_app = WebAppInfo(url=WEB_APP_URL)
-    markup.add(InlineKeyboardButton("🚀 Open Core Dream Game", web_app=web_app))
+    for key, item in PRODUCTS.items():
+        btn = InlineKeyboardButton(f"{item['name']} - ₹{item['price']}", callback_data=f"buy_{key}")
+        markup.add(btn)
     
-    bot.reply_to(message, "🔥 Welcome to Core Dream! Click the button below to launch the game app:", reply_markup=markup)
+    bot.send_message(
+        message.chat.id,
+        "🌟 **WELCOME TO OUR DIGITAL STORE** 🌟\n\nNiche diye gaye packs me se apna pack select karein:",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
 
-# Render par Flask server ko chalane ke liye
+@bot.callback_query_handler(func=lambda call: call.data.startswith("buy_"))
+def handle_buy(call):
+    prod_key = call.data.split("_", 1)[1]
+    product = PRODUCTS[prod_key]
+    user_id = call.from_user.id
+    user_orders[user_id] = prod_key
+    
+    qr_image = generate_upi_qr(product['price'], f"Order_{user_id}")
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("✅ Payment Kar Diya (Send Screenshot)", callback_data="send_ss"))
+    markup.add(InlineKeyboardButton("🔙 Back", callback_data="go_back"))
+    
+    caption = (
+        f"🛒 **Selected:** {product['name']}\n"
+        f"💰 **Amount:** ₹{product['price']}\n\n"
+        f"📲 Is QR code ko kisi bhi UPI app se scan karein. Exact amount automatic fill ho jayega.\n\n"
+        f"Payment karne ke baad niche button dabayein aur screenshot bhejein."
+    )
+    
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    bot.send_photo(call.message.chat.id, qr_image, caption=caption, parse_mode="Markdown", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data == "go_back")
+def go_back(call):
+    bot.delete_message(call.message.chat.id, call.message.message_id)
+    send_welcome(call.message)
+
+@bot.callback_query_handler(func=lambda call: call.data == "send_ss")
+def ask_ss(call):
+    bot.send_message(call.message.chat.id, "📸 Ab apna **Payment Screenshot** yahan bhejein.", parse_mode="Markdown")
+
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    user_id = message.from_user.id
+    if user_id not in user_orders:
+        bot.reply_to(message, "Pehle /start dabakar koi pack select karein.")
+        return
+
+    prod_key = user_orders[user_id]
+    product = PRODUCTS[prod_key]
+    
+    bot.reply_to(message, "⏳ Screenshot mil gaya! Admin verify karte hi aapko video mil jayega.")
+    
+    markup = InlineKeyboardMarkup()
+    markup.add(
+        InlineKeyboardButton("✅ Approve & Send", callback_data=f"app_{user_id}_{prod_key}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"rej_{user_id}")
+    )
+    
+    bot.send_photo(
+        ADMIN_ID,
+        message.photo[-1].file_id,
+        caption=f"🔔 **New Payment!**\n👤 User ID: `{user_id}`\n📦 Pack: {product['name']}\n💰 Price: ₹{product['price']}",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("app_"))
+def approve_order(call):
+    _, user_id, prod_key = call.data.split("_", 2)
+    user_id = int(user_id)
+    product = PRODUCTS[prod_key]
+    
+    bot.copy_message(chat_id=user_id, from_chat_id=product['channel_id'], message_id=product['msg_id'])
+    bot.send_message(user_id, "🎉 **Payment Approved!** Upar aapka video bhej diya gaya hai.", parse_mode="Markdown")
+    bot.edit_message_caption("✅ **Approved & Delivered!**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("rej_"))
+def reject_order(call):
+    user_id = int(call.data.split("_")[1])
+    bot.send_message(user_id, "❌ Aapka screenshot verify nahi ho paya. Kripya sahi screenshot bhejein.")
+    bot.edit_message_caption("❌ **Rejected!**", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+
 if __name__ == "__main__":
-    # Bot ko background me chalane ke liye threading bhi use kar sakte hain, 
-    # filhal hum Flask app run karenge jo Render web service ke liye zaroori hai.
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    Thread(target=run_web_server).start()
+    print("Bot chalu ho gaya hai...")
+    bot.infinity_polling()
